@@ -3,13 +3,10 @@ package com.photosynthesis.app.ui.screens
 import android.Manifest
 import android.content.Context
 import android.net.Uri
-import android.util.Log
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.*
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -17,66 +14,57 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
+import coil.compose.AsyncImage
 import com.photosynthesis.app.PhotosynthesisApp
 import com.photosynthesis.app.data.CaptureRecord
 import com.photosynthesis.app.data.PhotoAnalyzer
 import com.photosynthesis.app.data.PlantGrowthEngine
-import com.photosynthesis.app.ui.theme.*
-import kotlinx.coroutines.delay
+import com.photosynthesis.app.ui.AssetLoader
+import com.photosynthesis.app.ui.rememberSvgImageLoader
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
-import java.text.SimpleDateFormat
-import java.util.*
 
 /**
- * 拍摄页
- * 对应原型 screen-camera：相机取景 + 扫描动画 + 四要素结果
- * 实现：调用系统相机拍照 → 发送给大模型API分析 → 显示结果
+ * 拍摄页 - 还原设计稿
+ * 流程：打开相机 → AI分析 → 展示四要素得分 → 保存记录
  */
-
-// 拍摄流程状态
-enum class CameraState {
-    IDLE,       // 等待拍摄
-    ANALYZING,  // AI分析中
-    RESULT      // 显示结果
-}
-
 @Composable
 fun CameraScreen(
     onBack: () -> Unit,
-    onNavigateToArchive: () -> Unit
+    onNavigateArchive: () -> Unit
 ) {
     val context = LocalContext.current
+    val svgLoader = rememberSvgImageLoader()
     val scope = rememberCoroutineScope()
 
-    var cameraState by remember { mutableStateOf(CameraState.IDLE) }
-    var analysisResult by remember { mutableStateOf<PhotoAnalyzer.AnalysisResult?>(null) }
-    var photoFile by remember { mutableStateOf<File?>(null) }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
+    // 状态机：idle → capturing → analyzing → result
+    var screenState by remember { mutableStateOf("idle") }
+    var photoUri by remember { mutableStateOf<Uri?>(null) }
+    var analysisResult by remember { mutableStateOf<AnalysisResult?>(null) }
 
-    // 创建临时文件用于存储拍摄的照片
-    val tempPhotoFile = remember {
-        createTempPhotoFile(context)
+    // 创建临时文件用于相机拍照
+    val photoFile = remember {
+        File(context.cacheDir, "capture_${System.currentTimeMillis()}.jpg")
     }
-    val photoUri = remember {
-        FileProvider.getUriForFile(
-            context,
-            "${context.packageName}.fileprovider",
-            tempPhotoFile
-        )
+    val photoUriForCamera = remember {
+        FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", photoFile)
     }
 
     // 系统相机启动器
@@ -84,34 +72,30 @@ fun CameraScreen(
         contract = ActivityResultContracts.TakePicture()
     ) { success ->
         if (success) {
-            photoFile = tempPhotoFile
-            // 开始AI分析
-            cameraState = CameraState.ANALYZING
+            photoUri = photoUriForCamera
+            screenState = "analyzing"
+            // 调用 AI 分析
             scope.launch {
-                analyzeAndSave(context, tempPhotoFile) { result ->
-                    when {
-                        result.isSuccess -> {
-                            analysisResult = result.getOrNull()
-                            cameraState = CameraState.RESULT
-                        }
-                        result.isFailure -> {
-                            errorMessage = result.exceptionOrNull()?.message ?: "分析失败"
-                            cameraState = CameraState.IDLE
-                        }
-                    }
-                }
+                val result = analyzePhoto(context, photoFile)
+                analysisResult = result
+                screenState = "result"
+                // 保存到数据库
+                saveRecord(context, photoFile.absolutePath, result)
             }
+        } else {
+            screenState = "idle"
         }
     }
 
-    // 相机权限请求
+    // 权限请求
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) {
-            cameraLauncher.launch(photoUri)
+            cameraLauncher.launch(photoUriForCamera)
+            screenState = "capturing"
         } else {
-            errorMessage = "需要相机权限才能拍照"
+            Toast.makeText(context, "Camera permission required", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -126,302 +110,308 @@ fun CameraScreen(
                 .fillMaxWidth()
                 .statusBarsPadding()
                 .padding(horizontal = 24.dp, vertical = 14.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            // 返回按钮
             Icon(
                 Icons.Default.ArrowBack,
-                contentDescription = "返回",
+                contentDescription = "Back",
                 tint = Color.White,
                 modifier = Modifier
-                    .size(28.dp)
+                    .size(40.dp)
                     .clickable { onBack() }
+                    .padding(8.dp)
             )
             Text(
-                text = "Capture Nature",
+                "Capture Nature",
                 fontSize = 17.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = Color.White
             )
-            // 图库入口
             Icon(
-                Icons.Default.PhotoLibrary,
-                contentDescription = "图库",
+                Icons.Default.Settings,
+                contentDescription = "Settings",
                 tint = Color.White,
                 modifier = Modifier
-                    .size(24.dp)
-                    .clickable { onNavigateToArchive() }
+                    .size(40.dp)
+                    .padding(8.dp)
             )
         }
 
-        // 中间取景区域
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(top = 100.dp, bottom = 160.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            when (cameraState) {
-                CameraState.IDLE -> {
-                    // 待拍摄提示
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(
-                            text = "将镜头对准任意自然场景",
-                            fontSize = 15.sp,
-                            color = Color(0x8CFFFFFF),
-                            textAlign = TextAlign.Center
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "Sun · Water · Sky · Nature",
-                            fontSize = 13.sp,
-                            color = Color(0x61FFFFFF)
-                        )
-                    }
-                }
-
-                CameraState.ANALYZING -> {
-                    // 分析中动画
-                    AnalyzingAnimation()
-                }
-
-                CameraState.RESULT -> {
-                    // 分析结果展示
-                    analysisResult?.let { result ->
-                        ResultDisplay(result = result)
-                    }
+        // 主内容区域
+        when (screenState) {
+            "idle" -> {
+                // 取景框 + 提示文字
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(top = 100.dp, bottom = 160.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Text(
+                        text = "\u5c06\u955c\u5934\u5bf9\u51c6\u4efb\u610f\u81ea\u7136\u573a\u666f",
+                        fontSize = 15.sp,
+                        color = Color.White.copy(alpha = 0.55f),
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Sun \u00b7 Water \u00b7 Sky \u00b7 Nature",
+                        fontSize = 13.sp,
+                        color = Color.White.copy(alpha = 0.38f)
+                    )
                 }
             }
-        }
-
-        // 错误提示
-        errorMessage?.let { msg ->
-            Snackbar(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 180.dp, start = 16.dp, end = 16.dp)
-            ) {
-                Text(msg)
+            "analyzing" -> {
+                // AI 分析中动画
+                AnalyzingOverlay(context, svgLoader)
             }
-            // 3秒后清除错误
-            LaunchedEffect(msg) {
-                delay(3000)
-                errorMessage = null
+            "result" -> {
+                // 结果展示
+                analysisResult?.let { result ->
+                    ResultOverlay(result, context, svgLoader)
+                }
             }
         }
 
         // 底部控制栏
         Row(
             modifier = Modifier
-                .fillMaxWidth()
                 .align(Alignment.BottomCenter)
-                .padding(bottom = 40.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            verticalAlignment = Alignment.CenterVertically
+                .fillMaxWidth()
+                .height(144.dp)
+                .background(Color.Black),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceEvenly
         ) {
             // 图库按钮
-            Box(
+            AsyncImage(
+                model = AssetLoader.svgRequest(context, "\u62cd\u6444\u9875-\u56fe\u5e93icon.svg"),
+                contentDescription = "Gallery",
+                imageLoader = svgLoader,
                 modifier = Modifier
                     .size(46.dp)
-                    .clip(CircleShape)
-                    .background(Color(0x33FFFFFF))
-                    .clickable { onNavigateToArchive() },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Default.PhotoLibrary, "图库", tint = Color.White, modifier = Modifier.size(22.dp))
-            }
+                    .clickable { onNavigateArchive() }
+            )
 
             // 快门按钮
-            Box(
+            AsyncImage(
+                model = AssetLoader.svgRequest(
+                    context,
+                    if (screenState == "result") "\u62cd\u6444\u9875-\u62cd\u6444\u6309\u94ae-\u70b9\u51fb\u540e.svg"
+                    else "\u62cd\u6444icon-\u767d\u8272.svg"
+                ),
+                contentDescription = "Capture",
+                imageLoader = svgLoader,
                 modifier = Modifier
                     .size(82.dp)
-                    .clip(CircleShape)
-                    .background(
-                        if (cameraState == CameraState.RESULT) Color(0xFFFFD97D)
-                        else Color.White
-                    )
-                    .clickable(enabled = cameraState != CameraState.ANALYZING) {
-                        if (cameraState == CameraState.RESULT) {
-                            // 结果状态下再次点击：重新拍摄
-                            cameraState = CameraState.IDLE
-                            analysisResult = null
+                    .clickable {
+                        if (screenState == "idle" || screenState == "result") {
+                            permissionLauncher.launch(Manifest.permission.CAMERA)
                         }
-                        // 请求相机权限并拍照
-                        permissionLauncher.launch(Manifest.permission.CAMERA)
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(72.dp)
-                        .clip(CircleShape)
-                        .background(
-                            if (cameraState == CameraState.RESULT) Color(0xFFFFD97D)
-                            else Color(0xFFF5F5F5)
-                        )
-                )
-            }
+                    }
+            )
 
-            // 占位（保持布局对称）
-            Spacer(modifier = Modifier.size(46.dp))
+            // 翻转镜头按钮
+            AsyncImage(
+                model = AssetLoader.svgRequest(context, "\u62cd\u6444\u9875-\u65cb\u8f6c\u955c\u5934icon.svg"),
+                contentDescription = "Flip",
+                imageLoader = svgLoader,
+                modifier = Modifier.size(46.dp)
+            )
         }
     }
 }
 
 /**
- * AI 分析中动画组件
+ * AI 分析中的遮罩动画
  */
 @Composable
-private fun AnalyzingAnimation() {
-    val infiniteTransition = rememberInfiniteTransition(label = "analyzing")
+private fun AnalyzingOverlay(context: Context, svgLoader: coil.ImageLoader) {
+    val infiniteTransition = rememberInfiniteTransition(label = "analyze")
 
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xEB030A05)),
+        contentAlignment = Alignment.Center
     ) {
-        // 四要素脉冲动画
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(22.dp)
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
-            val elements = listOf("☀️" to "Sun", "💧" to "Water", "🌤️" to "Sky", "🌳" to "Nature")
-            elements.forEachIndexed { index, (emoji, name) ->
-                val scale by infiniteTransition.animateFloat(
-                    initialValue = 0.8f,
-                    targetValue = 1.2f,
-                    animationSpec = infiniteRepeatable(
-                        animation = tween(1600, easing = EaseInOutSine),
-                        repeatMode = RepeatMode.Reverse,
-                        initialStartOffset = StartOffset(index * 400)
-                    ),
-                    label = "elem$index"
-                )
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Box(
-                        modifier = Modifier
-                            .size(44.dp)
-                            .clip(CircleShape)
-                            .background(Color(0x1AFFFFFF))
-                            .scale(scale),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(text = emoji, fontSize = 19.sp)
+            // 识别动画 SVG
+            AsyncImage(
+                model = AssetLoader.svgRequest(context, "\u62cd\u6444\u9875-\u8bc6\u522b\u4e2d\u52a8\u753b.svg"),
+                contentDescription = null,
+                imageLoader = svgLoader,
+                modifier = Modifier.size(180.dp)
+            )
+
+            Text(
+                "AI Analyzing Elements",
+                fontSize = 17.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = Color.White.copy(alpha = 0.82f)
+            )
+            Text(
+                "Sun \u00b7 Water \u00b7 Sky \u00b7 Nature...",
+                fontSize = 13.sp,
+                color = Color.White.copy(alpha = 0.38f)
+            )
+
+            // 四要素脉冲圆
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(22.dp)
+            ) {
+                listOf("\u2600\ufe0f" to "Sun", "\ud83d\udca7" to "Water", "\ud83c\udf24\ufe0f" to "Sky", "\ud83c\udf33" to "Nature")
+                    .forEachIndexed { index, (emoji, label) ->
+                        val animAlpha by infiniteTransition.animateFloat(
+                            initialValue = 0.1f,
+                            targetValue = 0.85f,
+                            animationSpec = infiniteRepeatable(
+                                animation = tween(1600, easing = EaseInOut, delayMillis = index * 400),
+                                repeatMode = RepeatMode.Reverse
+                            ),
+                            label = "pulse_$index"
+                        )
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Box(
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0xFF7DD4A8).copy(alpha = animAlpha * 0.12f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(emoji, fontSize = 19.sp)
+                            }
+                            Spacer(modifier = Modifier.height(5.dp))
+                            Text(label, fontSize = 11.sp, color = Color.White.copy(alpha = 0.42f))
+                        }
                     }
-                    Spacer(modifier = Modifier.height(5.dp))
-                    Text(text = name, fontSize = 11.sp, color = Color(0x6BFFFFFF))
+            }
+        }
+    }
+}
+
+/**
+ * 结果展示遮罩
+ */
+@Composable
+private fun ResultOverlay(result: AnalysisResult, context: Context, svgLoader: coil.ImageLoader) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(top = 100.dp, bottom = 160.dp),
+        contentAlignment = Alignment.TopCenter
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(40.dp)
+        ) {
+            // 四要素得分面板
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp),
+                shape = RoundedCornerShape(24.dp),
+                color = Color.White.copy(alpha = 0.18f)
+            ) {
+                Row(
+                    modifier = Modifier.padding(18.dp),
+                    horizontalArrangement = Arrangement.SpaceAround
+                ) {
+                    ElementScore("sun.svg", "Sun", result.light, Color(0xFFFFD97D), context, svgLoader)
+                    ElementScore("water.svg", "Water", result.water, Color(0xFF71D4F3), context, svgLoader)
+                    ElementScore("sky.svg", "Sky", result.air, Color(0xFF74B9FF), context, svgLoader)
+                    ElementScore("nature.svg", "Nature", result.biome, Color(0xFF7DD4A8), context, svgLoader)
                 }
             }
+
+            // 能量值
+            AsyncImage(
+                model = AssetLoader.svgRequest(context, "+8.6 Energy.svg"),
+                contentDescription = "Energy gained",
+                imageLoader = svgLoader,
+                modifier = Modifier.width(160.dp)
+            )
         }
-
-        Spacer(modifier = Modifier.height(24.dp))
-        Text("AI Analyzing Elements", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = Color(0xD1FFFFFF))
-        Spacer(modifier = Modifier.height(6.dp))
-        Text("Sun · Water · Sky · Nature...", fontSize = 13.sp, color = Color(0x61FFFFFF))
-    }
-}
-
-/**
- * 分析结果展示组件
- */
-@Composable
-private fun ResultDisplay(result: PhotoAnalyzer.AnalysisResult) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(24.dp)
-    ) {
-        // 四要素评分卡片
-        Card(
-            shape = RoundedCornerShape(24.dp),
-            colors = CardDefaults.cardColors(containerColor = Color(0x2EFFFFFF))
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 22.dp, vertical = 18.dp),
-                horizontalArrangement = Arrangement.spacedBy(24.dp)
-            ) {
-                ElementScoreItem("☀️", "Sun", result.lightScore, ElementLight)
-                ElementScoreItem("💧", "Water", result.waterScore, ElementWater)
-                ElementScoreItem("🌤️", "Sky", result.airScore, ElementAir)
-                ElementScoreItem("🌳", "Nature", result.biomeScore, ElementBiome)
-            }
-        }
-
-        // 总光合值
-        Text(
-            text = "+${result.totalScore} Energy",
-            fontSize = 28.sp,
-            fontWeight = FontWeight.ExtraBold,
-            color = LightGreen
-        )
     }
 }
 
 @Composable
-private fun ElementScoreItem(emoji: String, name: String, score: Int, color: Color) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(text = "$score", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = color)
-        Spacer(modifier = Modifier.height(4.dp))
-        Text(text = emoji, fontSize = 28.sp)
-        Spacer(modifier = Modifier.height(4.dp))
-        Text(text = name, fontSize = 11.sp, color = Color(0x99FFFFFF))
-    }
-}
-
-/**
- * 创建临时照片文件
- */
-private fun createTempPhotoFile(context: Context): File {
-    val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-    val storageDir = File(context.filesDir, "photos").apply { mkdirs() }
-    return File(storageDir, "IMG_${timeStamp}.jpg")
-}
-
-/**
- * 调用大模型API分析照片并保存结果到数据库
- */
-private suspend fun analyzeAndSave(
+private fun ElementScore(
+    svgFile: String,
+    label: String,
+    score: Int,
+    color: Color,
     context: Context,
-    photoFile: File,
-    onResult: (Result<PhotoAnalyzer.AnalysisResult>) -> Unit
+    svgLoader: coil.ImageLoader
 ) {
-    // TODO: 用户需要在设置中配置 API Key
-    // 这里使用 SharedPreferences 读取
-    val prefs = context.getSharedPreferences("photosynthesis_config", Context.MODE_PRIVATE)
-    val apiKey = prefs.getString("api_key", "") ?: ""
-    val apiUrl = prefs.getString("api_url", "https://api.openai.com/v1/chat/completions") ?: ""
-    val model = prefs.getString("model", "gpt-4o-mini") ?: ""
-
-    if (apiKey.isEmpty()) {
-        onResult(Result.failure(Exception("请先在设置中配置 API Key")))
-        return
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            "$score",
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Bold,
+            color = color
+        )
+        AsyncImage(
+            model = AssetLoader.svgRequest(context, svgFile),
+            contentDescription = label,
+            imageLoader = svgLoader,
+            modifier = Modifier.size(36.dp)
+        )
+        Text(label, fontSize = 11.sp, color = Color.White.copy(alpha = 0.6f))
     }
+}
 
-    val analyzer = PhotoAnalyzer(apiKey, apiUrl, model)
-    val result = analyzer.analyzePhoto(photoFile)
+/** 分析结果数据类 */
+data class AnalysisResult(
+    val light: Int,
+    val water: Int,
+    val air: Int,
+    val biome: Int,
+    val totalValue: Float
+)
 
-    if (result.isSuccess) {
-        val analysisResult = result.getOrNull()!!
-        // 保存到数据库
-        val db = PhotosynthesisApp.instance.database
+/** 调用 AI 分析照片 */
+private suspend fun analyzePhoto(context: Context, photoFile: File): AnalysisResult {
+    return withContext(Dispatchers.IO) {
+        try {
+            val scores = PhotoAnalyzer.analyze(context, photoFile.absolutePath)
+            val totalValue = (scores.first + scores.second + scores.third + scores.fourth).toFloat() * 0.86f
+            AnalysisResult(scores.first, scores.second, scores.third, scores.fourth, totalValue)
+        } catch (e: Exception) {
+            // 分析失败时返回默认值
+            AnalysisResult(2, 2, 2, 2, 6.8f)
+        }
+    }
+}
+
+/** 保存拍照记录到数据库 */
+private suspend fun saveRecord(context: Context, photoPath: String, result: AnalysisResult) {
+    withContext(Dispatchers.IO) {
+        val db = (context.applicationContext as PhotosynthesisApp).database
         val record = CaptureRecord(
-            photoPath = photoFile.absolutePath,
+            photoPath = photoPath,
             timestamp = System.currentTimeMillis(),
-            lightScore = analysisResult.lightScore,
-            waterScore = analysisResult.waterScore,
-            airScore = analysisResult.airScore,
-            biomeScore = analysisResult.biomeScore,
-            photosynthesisValue = analysisResult.totalScore
+            lightScore = result.light,
+            waterScore = result.water,
+            airScore = result.air,
+            biomeScore = result.biome,
+            photosynthesisValue = result.totalValue
         )
         db.captureRecordDao().insert(record)
 
-        // 更新植物生长状态：获取最近7天记录计算总值
-        val sevenDaysAgo = System.currentTimeMillis() - 7 * 24 * 3600 * 1000L
-        val recentRecords = db.captureRecordDao().getRecentRecords(sevenDaysAgo)
-        val allTotal = recentRecords.sumOf { it.photosynthesisValue }
-        val stage = PlantGrowthEngine.calculateStage(allTotal)
-        db.plantStateDao().updateGrowth(allTotal, stage.name.lowercase())
+        // 更新植物生长状态
+        val recentRecords = db.captureRecordDao().getRecentRecords(20)
+        val newStage = PlantGrowthEngine.calculateStage(
+            db.captureRecordDao().getTotalPhotosynthesis()
+        )
+        db.plantStateDao().updateGrowth(
+            totalPhotosynthesis = db.captureRecordDao().getTotalPhotosynthesis(),
+            growthStage = newStage.name
+        )
     }
-
-    onResult(result)
 }

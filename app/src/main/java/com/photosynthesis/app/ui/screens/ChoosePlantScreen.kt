@@ -1,75 +1,80 @@
 package com.photosynthesis.app.ui.screens
 
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.photosynthesis.app.PhotosynthesisApp
-import com.photosynthesis.app.data.PlantState
-import kotlinx.coroutines.launch
+import coil.compose.AsyncImage
+import com.photosynthesis.app.ui.AssetLoader
 
 /**
- * 选择植物页
- * 对应原型 screen-choose：黄色渐变 + 横向轮播卡片
- * 三种植物：向日葵(sunflower) / 仙人掌(cactus) / 松树(pine)
+ * 选择植物页 - 还原设计稿
+ * 黄色渐变背景 + 横向轮播卡片（仙人掌/向日葵/松树）
+ * 卡片内含植物图片 + 名称 + 描述 + CTA按钮
  */
-
-// 植物数据
-data class PlantOption(
-    val type: String,
-    val name: String,
-    val emoji: String,
-    val description: String
-)
-
-private val plantOptions = listOf(
-    PlantOption("cactus", "Cactus", "🌵", "Needs little. Built for those with irregular routines or indoor life."),
-    PlantOption("sunflower", "Sunflower", "🌻", "Perfect for beginners or anyone looking for an easy-to-care-for plant."),
-    PlantOption("pine", "Pine Tree", "🌲", "Tough wind and pressure. Perfect if you need stability and resilience.")
-)
-
 @Composable
 fun ChoosePlantScreen(onPlantChosen: (String) -> Unit) {
-    // 当前选中索引（默认向日葵=1）
+    val context = LocalContext.current
+
+    // 当前选中的植物索引（0=仙人掌, 1=向日葵, 2=松树）
     var currentIndex by remember { mutableIntStateOf(1) }
-    val scope = rememberCoroutineScope()
+
+    // 植物数据
+    val plants = remember {
+        listOf(
+            PlantChoice(
+                id = "cactus",
+                name = "cactus",
+                desc = "Needs little. Built for those with irregular routines or indoor life.",
+                imageFile = "\u4ed9\u4eba\u638c.png"  // 仙人掌.png
+            ),
+            PlantChoice(
+                id = "sunflower",
+                name = "sunflower",
+                desc = "Perfect for beginners or anyone looking for an easy-to-care-for plant.",
+                imageFile = "\u9009\u62e9\u690d\u7269\u9875-\u5411\u65e5\u8475\u5361\u7247.png"  // 选择植物页-向日葵卡片.png
+            ),
+            PlantChoice(
+                id = "pine",
+                name = "pine tree",
+                desc = "Tough wind and pressure. Perfect if you need stability and resilience.",
+                imageFile = "\u677e\u6811.png"  // 松树.png
+            )
+        )
+    }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(
                 Brush.verticalGradient(
-                    colors = listOf(
-                        Color(0xFFFFD900), // 明黄
-                        Color(0xFFFEFADE)  // 浅黄
-                    )
+                    colors = listOf(Color(0xFFFFD900), Color(0xFFFEFADE))
                 )
             )
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
+            Spacer(modifier = Modifier.height(60.dp))
+
             // 顶部标题
-            Column(
-                modifier = Modifier.padding(start = 26.dp, top = 60.dp)
-            ) {
+            Column(modifier = Modifier.padding(horizontal = 26.dp)) {
                 Text(
                     text = "Choose",
                     fontSize = 34.sp,
@@ -84,6 +89,8 @@ fun ChoosePlantScreen(onPlantChosen: (String) -> Unit) {
                 )
             }
 
+            Spacer(modifier = Modifier.height(24.dp))
+
             // 斜体引言
             Text(
                 text = "Every time you walk toward the light,\nI grow a little taller than yesterday.",
@@ -93,156 +100,34 @@ fun ChoosePlantScreen(onPlantChosen: (String) -> Unit) {
                 color = Color(0xFF2A6010),
                 textAlign = TextAlign.Center,
                 lineHeight = 24.sp,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 32.dp)
+                modifier = Modifier.fillMaxWidth()
             )
 
-            Spacer(modifier = Modifier.weight(1f))
+            Spacer(modifier = Modifier.height(32.dp))
 
             // 卡片区域
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                contentAlignment = Alignment.Center
+            ) {
+                PlantCard(
+                    plant = plants[currentIndex],
+                    context = context,
+                    onChoose = { onPlantChosen(plants[currentIndex].id) }
+                )
+            }
+
+            // 分页圆点
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 20.dp),
+                    .padding(bottom = 28.dp),
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                plantOptions.forEachIndexed { index, plant ->
-                    val isActive = index == currentIndex
-                    // 缩放动画
-                    val scale by animateFloatAsState(
-                        targetValue = if (isActive) 1f else 0.8f,
-                        animationSpec = tween(300),
-                        label = "cardScale"
-                    )
-                    // 旋转动画
-                    val rotation by animateFloatAsState(
-                        targetValue = when {
-                            index < currentIndex -> 10f
-                            index > currentIndex -> -10f
-                            else -> 0f
-                        },
-                        animationSpec = tween(300),
-                        label = "cardRotation"
-                    )
-                    val alpha by animateFloatAsState(
-                        targetValue = if (isActive) 1f else 0.72f,
-                        animationSpec = tween(300),
-                        label = "cardAlpha"
-                    )
-
-                    Card(
-                        modifier = Modifier
-                            .width(if (isActive) 240.dp else 180.dp)
-                            .graphicsLayer {
-                                scaleX = scale
-                                scaleY = scale
-                                rotationZ = rotation
-                                this.alpha = alpha
-                            }
-                            .clickable { currentIndex = index },
-                        shape = RoundedCornerShape(28.dp),
-                        colors = CardDefaults.cardColors(containerColor = Color.White),
-                        elevation = CardDefaults.cardElevation(
-                            defaultElevation = if (isActive) 16.dp else 4.dp
-                        )
-                    ) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.padding(20.dp)
-                        ) {
-                            // 植物图片占位（用emoji + 背景色块）
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(140.dp)
-                                    .clip(RoundedCornerShape(16.dp))
-                                    .background(Color(0xFFF0F8E8)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(text = plant.emoji, fontSize = 64.sp)
-                            }
-
-                            Spacer(modifier = Modifier.height(12.dp))
-
-                            // 植物名
-                            Text(
-                                text = plant.name,
-                                fontSize = 22.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF1A1A1A)
-                            )
-
-                            Spacer(modifier = Modifier.height(6.dp))
-
-                            // 描述
-                            Text(
-                                text = plant.description,
-                                fontSize = 12.sp,
-                                color = Color(0xFF999999),
-                                textAlign = TextAlign.Center,
-                                lineHeight = 16.sp
-                            )
-
-                            Spacer(modifier = Modifier.height(12.dp))
-
-                            // CTA 按钮（仅选中卡片可见）
-                            if (isActive) {
-                                Button(
-                                    onClick = {
-                                        scope.launch {
-                                            // 保存选择的植物到数据库
-                                            val db = PhotosynthesisApp.instance.database
-                                            db.plantStateDao().upsert(
-                                                PlantState(plantType = plant.type)
-                                            )
-                                            onPlantChosen(plant.type)
-                                        }
-                                    },
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = Color(0xFF1A1A1A)
-                                    ),
-                                    shape = RoundedCornerShape(50.dp),
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Icon(
-                                        Icons.Default.ArrowForward,
-                                        contentDescription = null,
-                                        tint = Color.White,
-                                        modifier = Modifier
-                                            .size(22.dp)
-                                            .clip(CircleShape)
-                                            .background(Color(0xFF4CAF50))
-                                            .padding(3.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(
-                                        "Choose this partner",
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 13.sp
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    if (index < plantOptions.lastIndex) {
-                        Spacer(modifier = Modifier.width(8.dp))
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.weight(0.5f))
-
-            // 分页小圆点
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 40.dp),
-                horizontalArrangement = Arrangement.Center
-            ) {
-                plantOptions.forEachIndexed { index, _ ->
+                plants.forEachIndexed { index, _ ->
                     Box(
                         modifier = Modifier
                             .padding(horizontal = 4.dp)
@@ -250,7 +135,7 @@ fun ChoosePlantScreen(onPlantChosen: (String) -> Unit) {
                                 width = if (index == currentIndex) 24.dp else 8.dp,
                                 height = 8.dp
                             )
-                            .clip(RoundedCornerShape(4.dp))
+                            .clip(CircleShape)
                             .background(
                                 if (index == currentIndex) Color(0xFF1A1A1A)
                                 else Color(0x38000000)
@@ -260,5 +145,120 @@ fun ChoosePlantScreen(onPlantChosen: (String) -> Unit) {
                 }
             }
         }
+
+        // 左右滑动区域（简化：点击左/右半屏切换）
+        Row(modifier = Modifier.fillMaxSize()) {
+            // 左半屏 - 上一张
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .clickable(indication = null, interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }) {
+                        if (currentIndex > 0) currentIndex--
+                    }
+            )
+            // 右半屏 - 下一张
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .clickable(indication = null, interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }) {
+                        if (currentIndex < plants.size - 1) currentIndex++
+                    }
+            )
+        }
     }
 }
+
+/**
+ * 单张植物卡片组件
+ */
+@Composable
+private fun PlantCard(
+    plant: PlantChoice,
+    context: android.content.Context,
+    onChoose: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .width(300.dp)
+            .shadow(16.dp, RoundedCornerShape(28.dp)),
+        shape = RoundedCornerShape(28.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White)
+    ) {
+        Column {
+            // 植物图片
+            AsyncImage(
+                model = AssetLoader.imageRequest(context, plant.imageFile),
+                contentDescription = plant.name,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .padding(12.dp)
+                    .fillMaxWidth()
+                    .height(220.dp)
+                    .clip(RoundedCornerShape(16.dp))
+            )
+
+            // 卡片文字区
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = plant.name,
+                    fontSize = 26.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF1A1A1A)
+                )
+                Spacer(modifier = Modifier.height(7.dp))
+                Text(
+                    text = plant.desc,
+                    fontSize = 13.sp,
+                    color = Color(0xFF999999),
+                    textAlign = TextAlign.Center,
+                    lineHeight = 18.sp
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // CTA 按钮 - 黑色胶囊
+                Button(
+                    onClick = onChoose,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp),
+                    shape = RoundedCornerShape(50),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF1A1A1A)
+                    )
+                ) {
+                    // 绿色圆形箭头
+                    Box(
+                        modifier = Modifier
+                            .size(26.dp)
+                            .background(Color(0xFF4CAF50), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("→", color = Color.White, fontSize = 14.sp)
+                    }
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = "Choose this partner",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** 植物选项数据类 */
+private data class PlantChoice(
+    val id: String,
+    val name: String,
+    val desc: String,
+    val imageFile: String
+)

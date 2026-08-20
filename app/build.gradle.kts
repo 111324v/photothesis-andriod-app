@@ -71,8 +71,13 @@ dependencies {
     // JSON 解析
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
 
-    // 图片加载（展示拍摄的照片）
+    // 图片加载（展示拍摄的照片 + SVG 支持）
     implementation("io.coil-kt:coil-compose:2.6.0")
+    implementation("io.coil-kt:coil-svg:2.6.0")
+
+    // 视频播放（ExoPlayer / Media3）
+    implementation("androidx.media3:media3-exoplayer:1.3.1")
+    implementation("androidx.media3:media3-ui:1.3.1")
 
     // CameraX（拍照功能）
     implementation("androidx.camera:camera-core:1.3.4")

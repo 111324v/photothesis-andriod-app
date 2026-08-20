@@ -1,129 +1,91 @@
 package com.photosynthesis.app.ui.screens
 
+import android.content.Context
+import android.net.Uri
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CameraAlt
-import androidx.compose.material.icons.filled.GridView
-import androidx.compose.material.icons.filled.Person
-import androidx.compose.material3.*
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.photosynthesis.app.PhotosynthesisApp
-import com.photosynthesis.app.data.PlantGrowthEngine
-import com.photosynthesis.app.data.PlantState
-import com.photosynthesis.app.ui.theme.*
-import kotlinx.coroutines.launch
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
+import coil.compose.AsyncImage
+import com.photosynthesis.app.ui.AssetLoader
+import com.photosynthesis.app.ui.rememberSvgImageLoader
 
 /**
- * 主页
- * 对应原型 screen-home：天空背景 + 植物展示 + 独白气泡 + FAB菜单
+ * 主页面 - 还原设计稿
+ * - 视频背景（幼苗缓动）
+ * - 天空渐变兜底
+ * - 植物名称 + 状态
+ * - 独白对话框（SVG气泡）
+ * - FAB 圆盘菜单（拍摄/图库）
  */
 @Composable
 fun HomeScreen(
-    onNavigateToCamera: () -> Unit,
-    onNavigateToArchive: () -> Unit,
-    onNavigateToProfile: () -> Unit
+    onNavigateCamera: () -> Unit,
+    onNavigateArchive: () -> Unit,
+    onNavigateProfile: () -> Unit
 ) {
-    val db = PhotosynthesisApp.instance.database
-    val plantState by db.plantStateDao().getPlantState().collectAsState(initial = null)
-    val totalPhotosynthesis by db.captureRecordDao().getTotalPhotosynthesis().collectAsState(initial = 0)
+    val context = LocalContext.current
+    val svgLoader = rememberSvgImageLoader()
 
     // FAB 展开状态
     var fabExpanded by remember { mutableStateOf(false) }
 
-    // 植物呼吸动画（轻微缩放模拟微风）
-    val infiniteTransition = rememberInfiniteTransition(label = "plantBreeze")
-    val plantScale by infiniteTransition.animateFloat(
+    // 微风呼吸动画
+    val infiniteTransition = rememberInfiniteTransition(label = "breeze")
+    val scale by infiniteTransition.animateFloat(
         initialValue = 1f,
         targetValue = 1.012f,
         animationSpec = infiniteRepeatable(
-            animation = tween(4000, easing = EaseInOutSine),
+            animation = tween(3000, easing = EaseInOut),
             repeatMode = RepeatMode.Reverse
         ),
-        label = "plantScale"
+        label = "plant_scale"
     )
 
-    // 计算生长阶段
-    val currentStage = PlantGrowthEngine.calculateStage(totalPhotosynthesis)
-    val currentPlant = plantState ?: PlantState()
-
-    // 植物 emoji 映射
-    val plantEmoji = when (currentPlant.plantType) {
-        "sunflower" -> when (currentStage) {
-            PlantGrowthEngine.GrowthStage.SEED -> "🫘"
-            PlantGrowthEngine.GrowthStage.SPROUT -> "🌱"
-            PlantGrowthEngine.GrowthStage.SEEDLING -> "🪴"
-            PlantGrowthEngine.GrowthStage.GROWING -> "🌿"
-            PlantGrowthEngine.GrowthStage.BLOOMING -> "🌻"
-            PlantGrowthEngine.GrowthStage.ETERNAL -> "🌻✨"
-        }
-        "cactus" -> when (currentStage) {
-            PlantGrowthEngine.GrowthStage.SEED -> "🫘"
-            PlantGrowthEngine.GrowthStage.SPROUT -> "🌱"
-            PlantGrowthEngine.GrowthStage.SEEDLING -> "🪴"
-            PlantGrowthEngine.GrowthStage.GROWING -> "🌵"
-            PlantGrowthEngine.GrowthStage.BLOOMING -> "🌵🌸"
-            PlantGrowthEngine.GrowthStage.ETERNAL -> "🌵✨"
-        }
-        "pine" -> when (currentStage) {
-            PlantGrowthEngine.GrowthStage.SEED -> "🫘"
-            PlantGrowthEngine.GrowthStage.SPROUT -> "🌱"
-            PlantGrowthEngine.GrowthStage.SEEDLING -> "🪴"
-            PlantGrowthEngine.GrowthStage.GROWING -> "🌲"
-            PlantGrowthEngine.GrowthStage.BLOOMING -> "🎄"
-            PlantGrowthEngine.GrowthStage.ETERNAL -> "🌲✨"
-        }
-        else -> "🌱"
-    }
-
-    // 独白文案
-    val monologueText = when (currentStage) {
-        PlantGrowthEngine.GrowthStage.SEED -> "I'm just a little seed... waiting for your first light ☀️"
-        PlantGrowthEngine.GrowthStage.SPROUT -> "I can feel the warmth! Keep going 🌤️"
-        PlantGrowthEngine.GrowthStage.SEEDLING -> "Growing stronger with every photo you take 💚"
-        PlantGrowthEngine.GrowthStage.GROWING -> "Look how tall I've become! 🌿"
-        PlantGrowthEngine.GrowthStage.BLOOMING -> "Every bit of sunlight this week — I received it all ✨"
-        PlantGrowthEngine.GrowthStage.ETERNAL -> "We've been through so much together 🌟"
-    }
-
     Box(modifier = Modifier.fillMaxSize()) {
-        // 天空渐变背景
+        // 天空渐变兜底层
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(
                     Brush.verticalGradient(
                         colors = listOf(
-                            Color(0xFF7DD8EE), // 天空蓝
-                            Color(0xFF9EE0D0), // 过渡色
-                            Color(0xFF6AB84A)  // 草地绿
+                            Color(0xFF7DD8EE),  // 天空蓝
+                            Color(0xFF9EE0D0),  // 过渡青
+                            Color(0xFF6AB84A)   // 底部绿
                         )
                     )
                 )
         )
 
-        // 植物展示（居中大 emoji）
-        Text(
-            text = plantEmoji,
-            fontSize = 120.sp,
+        // 视频背景（植物动画）
+        VideoBackground(
+            context = context,
+            videoFileName = "\u5e7c\u82d7-\u7f13\u52a8.mp4",  // 幼苗-缓动.mp4
             modifier = Modifier
-                .align(Alignment.Center)
-                .scale(plantScale)
-                .offset(y = 40.dp)
+                .fillMaxSize()
+                .graphicsLayer(scaleX = scale, scaleY = scale)
         )
 
         // 顶部标题行
@@ -137,13 +99,13 @@ fun HomeScreen(
         ) {
             Column {
                 Text(
-                    text = currentPlant.plantType.replaceFirstChar { it.uppercase() },
+                    text = "Sunflower",
                     fontSize = 34.sp,
                     fontWeight = FontWeight.ExtraBold,
                     color = Color(0xFF0C3318)
                 )
                 Text(
-                    text = currentStage.displayName.uppercase(),
+                    text = "RADIANT",
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color(0xFF1A4A22),
@@ -151,129 +113,185 @@ fun HomeScreen(
                 )
             }
 
-            // 右上角「我的」按钮
+            // 右上角"我的"按钮
             Box(
                 modifier = Modifier
                     .size(40.dp)
                     .clip(CircleShape)
-                    .background(Color(0x66FFFFFF))
-                    .clickable { onNavigateToProfile() },
+                    .background(Color.White.copy(alpha = 0.4f))
+                    .clickable { onNavigateProfile() },
                 contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    Icons.Default.Person,
-                    contentDescription = "我的",
-                    tint = Color(0xFF0C3318),
+                AsyncImage(
+                    model = AssetLoader.svgRequest(context, "\u6211\u7684-icon.svg"),
+                    contentDescription = "Profile",
+                    imageLoader = svgLoader,
                     modifier = Modifier.size(22.dp)
                 )
             }
         }
 
         // 独白对话框
-        Card(
+        Box(
             modifier = Modifier
-                .align(Alignment.TopCenter)
-                .padding(top = 200.dp)
-                .padding(horizontal = 50.dp),
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = Color(0xCCFFFFFF)
-            )
+                .align(Alignment.TopEnd)
+                .padding(top = 280.dp, end = 10.dp)
+                .width(311.dp)
+                .height(123.dp)
         ) {
+            // SVG 气泡背景
+            AsyncImage(
+                model = AssetLoader.svgRequest(context, "\u5bf9\u8bdd\u6846.svg"),
+                contentDescription = null,
+                imageLoader = svgLoader,
+                modifier = Modifier.fillMaxSize()
+            )
+            // 独白文字
             Text(
-                text = monologueText,
-                fontSize = 14.sp,
+                text = "Every bit of sunlight this week \u2014 I received it all \u2728",
+                fontSize = 15.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = Color(0xFF074066),
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp)
+                lineHeight = 17.sp,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 27.dp, start = 34.dp, end = 29.dp)
+                    .width(248.dp)
             )
         }
 
-        // 左下角植物信息卡
-        Card(
-            modifier = Modifier
-                .align(Alignment.BottomStart)
-                .padding(start = 18.dp, bottom = 100.dp),
-            shape = RoundedCornerShape(18.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = Color(0xCC040E08)
-            )
-        ) {
-            Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp)) {
-                Text(
-                    text = currentPlant.plantType.replaceFirstChar { it.uppercase() },
-                    fontSize = 28.sp,
-                    fontWeight = FontWeight.Black,
-                    color = Color.White
-                )
-                Row(verticalAlignment = Alignment.Baseline) {
-                    Text("光合值 ", fontSize = 11.sp, color = Color(0x80FFFFFF))
-                    Text(
-                        text = "$totalPhotosynthesis",
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = LightGreen
-                    )
-                    Text(" lux", fontSize = 11.sp, color = Color(0x73FFFFFF))
-                }
-            }
-        }
-
-        // FAB 按钮区域（右下角）
+        // FAB 系统
         Box(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .padding(end = 18.dp, bottom = 48.dp)
         ) {
-            // 展开后的子按钮
+            // 展开时的圆盘背景
             if (fabExpanded) {
-                // 拍摄按钮（左侧）
-                FloatingActionButton(
-                    onClick = { fabExpanded = false; onNavigateToCamera() },
-                    containerColor = Color(0xCC0A1A0E),
+                Box(
                     modifier = Modifier
-                        .offset(x = (-80).dp, y = 0.dp)
-                        .size(48.dp)
+                        .size(287.dp)
+                        .offset(x = (-96).dp, y = (-96).dp)
+                        .clip(CircleShape)
+                        .background(Color(0xC4060F0A))
                 ) {
-                    Icon(Icons.Default.CameraAlt, "拍摄", tint = Color.White)
-                }
+                    // 拍摄按钮（左侧9点方向）
+                    Box(
+                        modifier = Modifier
+                            .offset(x = 21.dp, y = 121.dp)
+                            .size(44.dp)
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha = 0.11f))
+                            .clickable {
+                                fabExpanded = false
+                                onNavigateCamera()
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("\uD83D\uDCF7", fontSize = 18.sp)
+                    }
+                    Text(
+                        "Camera",
+                        fontSize = 10.sp,
+                        color = Color.White.copy(alpha = 0.6f),
+                        modifier = Modifier.offset(x = 21.dp, y = 173.dp).width(44.dp),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
 
-                // 光档案按钮（上方）
-                FloatingActionButton(
-                    onClick = { fabExpanded = false; onNavigateToArchive() },
-                    containerColor = Color(0xCC0A1A0E),
-                    modifier = Modifier
-                        .offset(x = 0.dp, y = (-80).dp)
-                        .size(48.dp)
-                ) {
-                    Icon(Icons.Default.GridView, "档案", tint = Color.White)
+                    // 图库按钮（正上12点方向）
+                    Box(
+                        modifier = Modifier
+                            .offset(x = 121.dp, y = 21.dp)
+                            .size(44.dp)
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha = 0.11f))
+                            .clickable {
+                                fabExpanded = false
+                                onNavigateArchive()
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("\uD83D\uDDBC", fontSize = 18.sp)
+                    }
+                    Text(
+                        "Archive",
+                        fontSize = 10.sp,
+                        color = Color.White.copy(alpha = 0.6f),
+                        modifier = Modifier.offset(x = 121.dp, y = 73.dp).width(44.dp),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
                 }
             }
 
-            // 主 FAB
-            FloatingActionButton(
-                onClick = { fabExpanded = !fabExpanded },
-                containerColor = Color(0xFF1A1A1A),
-                modifier = Modifier.size(64.dp)
-            ) {
-                Text(
-                    text = if (fabExpanded) "✕" else "☀️",
-                    fontSize = 24.sp
-                )
-            }
+            // 主 FAB 按钮
+            AsyncImage(
+                model = AssetLoader.svgRequest(
+                    context,
+                    if (fabExpanded) "\u53f3\u4e0b\u89d2-\u60ac\u6d6eicon-\u5c55\u5f00\u6001.svg"
+                    else "\u53f3\u4e0b\u89d2-\u60ac\u6d6eicon-\u6536\u8d77\u72b6\u6001.svg"
+                ),
+                contentDescription = "Menu",
+                imageLoader = svgLoader,
+                modifier = Modifier
+                    .size(96.dp)
+                    .clickable { fabExpanded = !fabExpanded }
+                    .graphicsLayer(rotationZ = if (fabExpanded) 45f else 0f)
+            )
         }
 
-        // FAB 展开时的透明遮罩（点击关闭）
+        // 展开遮罩（点击关闭FAB）
         if (fabExpanded) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .clickable(
                         indication = null,
-                        interactionSource = remember { MutableInteractionSource() }
+                        interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
                     ) { fabExpanded = false }
             )
         }
     }
+}
+
+/**
+ * 视频背景播放组件
+ * 使用 ExoPlayer 播放 assets/video/ 目录下的 MP4
+ */
+@Composable
+fun VideoBackground(
+    context: Context,
+    videoFileName: String,
+    modifier: Modifier = Modifier
+) {
+    // 创建并记住 ExoPlayer 实例
+    val exoPlayer = remember {
+        ExoPlayer.Builder(context).build().apply {
+            val uri = Uri.parse("file:///android_asset/video/$videoFileName")
+            setMediaItem(MediaItem.fromUri(uri))
+            repeatMode = Player.REPEAT_MODE_ALL  // 循环播放
+            playWhenReady = true
+            volume = 0f  // 静音
+            prepare()
+        }
+    }
+
+    // 页面销毁时释放播放器
+    DisposableEffect(Unit) {
+        onDispose { exoPlayer.release() }
+    }
+
+    // 渲染 PlayerView
+    AndroidView(
+        factory = { ctx ->
+            PlayerView(ctx).apply {
+                player = exoPlayer
+                useController = false  // 隐藏控制栏
+                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                // 设置背景透明，让渐变层透过
+                setBackgroundColor(android.graphics.Color.TRANSPARENT)
+            }
+        },
+        modifier = modifier
+    )
 }
