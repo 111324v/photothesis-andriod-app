@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 简单的叶子形状作为App图标 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,28 C54,28 72,40 72,58 C72,72 63,80 54,80 C45,80 36,72 36,58 C36,40 54,28 54,28 Z"/>
+    <path
+        android:fillColor="#E8F5E9"
+        android:pathData="M54,38 L54,72"
+        android:strokeWidth="2"
+        android:strokeColor="#81C784"/>
+</vector>

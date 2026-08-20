@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- 允许 FileProvider 访问内部存储的 photos 目录（用于相机拍照） -->
+    <files-path
+        name="photos"
+        path="photos/" />
+</paths>
